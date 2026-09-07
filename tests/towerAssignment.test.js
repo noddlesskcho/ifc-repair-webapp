@@ -45,6 +45,30 @@ describe("buildTowerAssignments", () => {
     closeModel(model);
   });
 
+  it("uses a unique repeated placement stack when a valid tower master has no product geometry", async () => {
+    const source = fs
+      .readFileSync(new URL("./fixtures/multi_block_podium.ifc", import.meta.url), "utf8")
+      .replace(/^#2017=.*\r?\n/m, "")
+      .replace("#5001=IFCCARTESIANPOINT((5000.,5000.,0.));", "#5001=IFCCARTESIANPOINT((30000.,0.,0.));")
+      .replace("#6001=IFCCARTESIANPOINT((10000.,5000.,0.));", "#6001=IFCCARTESIANPOINT((30000.,0.,3000.));");
+    const api = await createIfcApi();
+    const model = openModel(api, Buffer.from(source));
+    const blockResult = detectProjectBlocks(model);
+    const towerB = blockResult.blocks.find((b) => b.name === "Tower B");
+    const linked = blockResult.linkedBuildings.filter((b) => b.name.startsWith("Typical Unit"));
+    const { assignments } = buildTowerAssignments(model, blockResult);
+
+    expect(towerB.elementCount).toBe(0);
+    expect(linked).toHaveLength(2);
+    for (const building of linked) {
+      const assignment = assignments.get(building.id);
+      expect(assignment.blockGuid).toBe(towerB.guid);
+      expect(assignment.method).toBe("placement-stack");
+      expect(assignment.confident).toBe(true);
+    }
+    closeModel(model);
+  });
+
   it("does not modify the IFC while building assignments", async () => {
     const model = await openFixture("multi_block_regression_wrong_tower.ifc");
     const blockResult = detectProjectBlocks(model);
@@ -147,4 +171,28 @@ describe("buildTowerAssignments", () => {
     }
     closeModel(model);
   }, 15000);
+
+  it("real distinct-placement reference file: assigns both vertical stacks to their correct block", async () => {
+    const refPath = "C:\\Users\\ISS\\Downloads\\Multi Block Export.ifc";
+    if (!fs.existsSync(refPath)) return;
+
+    const BLOCK_A = "2GpSE$G6cqQG$cxkhQKa9s";
+    const BLOCK_B = "255Ewxp09I0A7CFuDkrVw1";
+    const A_BRANCHES = new Set(["1QTWXF8WOshV8CYLES_fVB", "3GrA9SbsTTuqTQpgVW7vbF", "1Oi$d7JL53JMzV4VFThWYJ", "1rjuFUeiHsAR7oc9275wk1"]);
+    const B_BRANCHES = new Set(["1u$Ytfoss_4v4hrQebbVOu", "2U63VV72C9R4Ypn$2$aBgp", "0VM4snCQYL47ZV4Rl8QaDC", "1kexj5GgNW0NobgizX7KS$", "3tvNjlZv62WOBefwKJooab", "1rDloBwcRRL2QmXdS5doju", "1pBsv$ayHW2x7NaEzyX$8i"]);
+    const api = await createIfcApi();
+    const model = openModel(api, fs.readFileSync(refPath));
+    const blockResult = detectProjectBlocks(model);
+    const { assignments } = buildTowerAssignments(model, blockResult);
+    const candidates = [...blockResult.linkedBuildings, ...blockResult.unclassifiedBuildings];
+
+    for (const building of candidates) {
+      if (!A_BRANCHES.has(building.guid) && !B_BRANCHES.has(building.guid)) continue;
+      const assignment = assignments.get(building.id);
+      expect(assignment.blockGuid).toBe(A_BRANCHES.has(building.guid) ? BLOCK_A : BLOCK_B);
+      expect(assignment.method).toBe("placement-stack");
+      expect(assignment.confident).toBe(true);
+    }
+    closeModel(model);
+  });
 });

@@ -1,8 +1,9 @@
+import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import { closeModel, openFixture } from "./testHelpers.js";
 import { analyze, proposalNeedsAction, selectRepairableProposals } from "../src/core/detector.js";
 import { detectProjectBlocks } from "../src/core/blockDetection.js";
-import { getLine } from "../src/core/ifcModel.js";
+import { createIfcApi, getLine, openModel } from "../src/core/ifcModel.js";
 
 describe("detector", () => {
   it("clean file needs no repair", async () => {
@@ -85,6 +86,20 @@ describe("detector", () => {
 });
 
 describe("detector -- MULTI_BLOCK mode", () => {
+  it("reports cross-block storey-name conflicts without blocking physical analysis", async () => {
+    const model = await openFixture("multi_block_same_name_diff_ffl.ifc");
+    const blockResult = detectProjectBlocks(model);
+    const report = analyze(model, { blocks: blockResult });
+
+    expect(blockResult.mode).toBe("MULTI_BLOCK");
+    expect(report.blocksMode).toBe("MULTI_BLOCK");
+    expect(report.storeyNameComparison.pass).toBe(false);
+    expect(report.storeyNameComparison.conflicts.length).toBeGreaterThan(0);
+    expect(report.warnings.some((warning) => warning.includes("reused at different FFLs across blocks"))).toBe(true);
+    expect(report.towerGroups).toHaveLength(blockResult.blocks.length);
+    closeModel(model);
+  });
+
   it("never proposes renaming a storey to another tower's name just because they share an elevation", async () => {
     const model = await openFixture("multi_block_regression_wrong_tower.ifc");
     const blockResult = detectProjectBlocks(model);
@@ -143,6 +158,25 @@ describe("detector -- MULTI_BLOCK mode", () => {
     closeModel(model);
   });
 
+  it("uses the authoritative SINGLE_BLOCK preflight master instead of selecting a second master", async () => {
+    const model = await openFixture("multi_block_podium.ifc");
+    const detected = detectProjectBlocks(model);
+    const towerB = detected.blocks.find((b) => b.name === "Tower B");
+    const typicalB = detected.linkedBuildings.find((b) => b.name === "Typical Unit B");
+    const supplied = {
+      mode: "SINGLE_BLOCK",
+      blocks: [towerB],
+      baseBuildings: [],
+      linkedBuildings: [typicalB],
+      unclassifiedBuildings: [],
+    };
+    const report = analyze(model, { blocks: supplied });
+
+    expect(report.masterBuildingGuid).toBe(towerB.guid);
+    expect(report.linkedBranches.map((branch) => branch.buildingGuid)).toEqual([typicalB.guid]);
+    closeModel(model);
+  });
+
   it("never auto-selects a proposal whose tower assignment wasn't confident, even if the FFL match is -- until manually confirmed", async () => {
     const model = await openFixture("multi_block_podium.ifc");
     const blockResult = detectProjectBlocks(model);
@@ -162,6 +196,24 @@ describe("detector -- MULTI_BLOCK mode", () => {
     });
     selected = new Set(selectRepairableProposals(confirmed).map((p) => p.sourceStoreyId));
     expect(selected.has(uncertain.sourceStoreyId)).toBe(true);
+    closeModel(model);
+  });
+
+  it("real distinct-placement reference file: proposes only the 11 correctly tower-scoped linked storeys", async () => {
+    const refPath = "C:\\Users\\ISS\\Downloads\\Multi Block Export.ifc";
+    if (!fs.existsSync(refPath)) return;
+
+    const api = await createIfcApi();
+    const model = openModel(api, fs.readFileSync(refPath));
+    const blockResult = detectProjectBlocks(model);
+    const report = analyze(model, { blocks: blockResult });
+    const selected = selectRepairableProposals(report);
+
+    expect(report.blocksMode).toBe("MULTI_BLOCK");
+    expect(selected).toHaveLength(11);
+    expect(selected.reduce((sum, proposal) => sum + proposal.elementCount, 0)).toBe(99);
+    expect(selected.filter((proposal) => proposal.sourceBlockGuid === "2GpSE$G6cqQG$cxkhQKa9s")).toHaveLength(4);
+    expect(selected.filter((proposal) => proposal.sourceBlockGuid === "255Ewxp09I0A7CFuDkrVw1")).toHaveLength(7);
     closeModel(model);
   });
 });

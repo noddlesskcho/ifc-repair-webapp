@@ -7,7 +7,7 @@
  * stepPatcher.js replace only the Name and LongName tokens in the source IFC.
  */
 import { getContainedElements, getLine } from "./ifcModel.js";
-import { proposalNeedsAction as needsAction } from "./detector.js";
+import { proposalNeedsAction as needsAction, selectRepairableProposals } from "./detector.js";
 
 const attributeValue = (attribute) => attribute?.value ?? null;
 
@@ -92,11 +92,13 @@ function planRename(model, proposal) {
 
 export function applyRepair(model, report, { selectedStoreyIds = null, onProgress } = {}) {
   const actionable = report.proposals.filter(needsAction);
+  const effectiveSelection =
+    selectedStoreyIds || new Set(selectRepairableProposals(report).map((proposal) => proposal.sourceStoreyId));
   const renameProposals = [];
   const skipped = [];
 
   for (const proposal of actionable) {
-    if (selectedStoreyIds && !selectedStoreyIds.has(proposal.sourceStoreyId)) skipped.push(proposal);
+    if (!effectiveSelection.has(proposal.sourceStoreyId)) skipped.push(proposal);
     else renameProposals.push(proposal);
   }
 

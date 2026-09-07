@@ -185,21 +185,24 @@ public/
 Core logic (`src/core`) has no dependency on the UI:
 
 ```js
-import { createIfcApi, openModel, saveModel } from "./core/ifcModel.js";
+import { createIfcApi, openModel } from "./core/ifcModel.js";
+import { detectProjectBlocks } from "./core/blockDetection.js";
 import { analyze, selectRepairableProposals } from "./core/detector.js";
 import { applyRepair, buildElementAudit, validateRepair } from "./core/repairer.js";
 import { buildReportData, renderPdfReport } from "./core/report.js";
+import { patchIfcStoreyNames } from "./core/stepPatcher.js";
 
 const api = await createIfcApi();
-const model = openModel(api, arrayBufferOfIfcFile);
-const report = analyze(model, { sourceName: "model.ifc" });
+const sourceBytes = new Uint8Array(arrayBufferOfIfcFile);
+const model = openModel(api, sourceBytes);
+const blocks = detectProjectBlocks(model);
+const report = analyze(model, { sourceName: "model.ifc", blocks });
 
 if (report.repairNeeded) {
-  const selected = new Set(selectRepairableProposals(report, { onlyHighConfidence: true }).map((p) => p.sourceStoreyId));
+  const selected = new Set(selectRepairableProposals(report).map((p) => p.sourceStoreyId));
   const result = applyRepair(model, report, { selectedStoreyIds: selected });
   const audit = buildElementAudit(model, report, result);
-  const validation = validateRepair(model, result);
-  const bytes = saveModel(model); // Uint8Array -- write it out however you like
+  const bytes = patchIfcStoreyNames(sourceBytes, result.renameChanges);
 }
 ```
 
@@ -212,11 +215,25 @@ if (report.repairNeeded) {
    millimetres via the file's own `IfcUnitAssignment` before anything is
    compared — a metres-denominated file's `3.6` and a millimetres file's
    `3600` must compare equal.
-2. The **master building** is the one with the most storeys (ties broken by
-   total contained element count) — a structural, file-driven heuristic, not
-   one based on names or site membership, so it holds even when a linked
-   branch lives under its own site.
-3. Every other `IfcBuilding` is a **linked branch candidate**.
+2. Score every building with at least two storeys as a possible reference
+   ladder using storey count, resolved vertical extent and contained products.
+   A zero-product building remains eligible because Revit may place all of a
+   tower's products in sibling linked-instance buildings. Progressive storey
+   naming contributes at most a 10% supporting bonus and never identifies a
+   tower by itself.
+3. Separate short overlapping podium/base buildings from the surviving block
+   anchors. Buildings below the comparative score split become linked or
+   unclassified candidates according to whether they contain products.
+4. For multiple blocks, assign candidates by rendered product footprint when
+   every tower has usable geometry. If a valid anchor is empty, a candidate is
+   trusted by placement only when at least two instances repeat at the same
+   uniquely matching tower origin. Shared or isolated placements require
+   review.
+5. Compare storey names across detected blocks as a diagnostic only. Reused or
+   similar names can support review, but never override physical geometry,
+   placement-stack evidence or the confidence gate.
+6. The resulting preflight classification is authoritative for detection and
+   repair. No later stage independently chooses another master building.
 
 ### Interval containment, not nearest-neighbour
 

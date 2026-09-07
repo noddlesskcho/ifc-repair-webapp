@@ -17,15 +17,16 @@
  * branches at different physical towers can expose identical placement-origin
  * signatures while their rendered geometry is tens of metres apart.
  *
- * Multi-block assignment therefore uses one streamed geometry pass. It builds
- * a plan perimeter from each real tower's meshes and scores linked branches by
- * how much of their actual geometry lies within each perimeter. Placement
- * origins remain a fallback only for branches with no mesh geometry. Z and
- * storey-pattern evidence are intentionally excluded from tower identity;
- * they belong to the later level-matching step and previously caused upper
- * instances of one vertical stack to jump to a different tower.
+ * Multi-block assignment therefore prefers one streamed geometry pass. It
+ * builds a plan perimeter from each real tower's meshes and scores linked
+ * branches by how much of their actual geometry lies within each perimeter.
+ * A unique, repeated building-placement stack is the high-confidence fallback
+ * for an otherwise valid tower whose reference ladder contains no products.
+ * Shared or isolated placement origins remain review-only. Z is intentionally
+ * excluded from tower identity; it belongs to the later level-matching step
+ * and previously caused upper instances of one vertical stack to jump towers.
  */
-import { getContainedElements, getLine, worldXYZ } from "./ifcModel.js";
+import { getContainedElements, getLengthUnitScaleToMM, getLine, worldXYZ } from "./ifcModel.js";
 
 /**
  * Every candidate building is ALWAYS assigned to its best-scoring tower --
@@ -59,6 +60,12 @@ export const CONFIDENT_MARGIN = 6;
  * A near-even placement split is never promoted to a confident result.
  */
 const XY_CONFIDENT_MARGIN = 5;
+
+/** Building placements within this distance are treated as the same exported instance origin. */
+export const PLACEMENT_STACK_TOLERANCE_MM = 150;
+
+/** One coincident building can be accidental; two repeated instances establish a vertical stack. */
+const MIN_PLACEMENT_STACK_SUPPORT = 2;
 
 // Tower identity is independent of tolerance and manual storey overrides, so
 // keep the expensive mesh result for the lifetime of an opened model.
@@ -418,6 +425,45 @@ function xyFallbackFromBuildingPlacement(building, known, envelopes) {
 }
 
 /**
+ * Scores every block from the candidate building's own resolved placement.
+ * This is independent of tower product envelopes, so it remains available
+ * when a legitimate reference-ladder building contains no products. An
+ * exact match is only trusted later when it is unique and repeated by a
+ * second candidate; otherwise these scores remain a reviewable best guess.
+ */
+function buildingPlacementEvidence(building, blocks, scaleToMM) {
+  if (building.x == null || building.y == null) {
+    return { scores: blocks.map((block) => ({ blockId: block.id, blockGuid: block.guid, score: 0 })), uniqueExactBlockId: null };
+  }
+
+  const distances = blocks.map((block) => ({
+    blockId: block.id,
+    blockGuid: block.guid,
+    distanceMm:
+      block.x == null || block.y == null
+        ? Infinity
+        : Math.hypot(building.x - block.x, building.y - block.y) * scaleToMM,
+  }));
+  const exact = distances.filter((entry) => entry.distanceMm <= PLACEMENT_STACK_TOLERANCE_MM);
+  const finite = distances.filter((entry) => Number.isFinite(entry.distanceMm));
+  const inverse = finite.map((entry) => 1 / (entry.distanceMm + 500));
+  const sumInverse = inverse.reduce((sum, value) => sum + value, 0);
+  const scoreById = new Map();
+  finite.forEach((entry, index) => {
+    const share = sumInverse > 0 ? inverse[index] / sumInverse : 1 / Math.max(finite.length, 1);
+    scoreById.set(entry.blockId, Math.min(100, 55 * share + (entry.distanceMm <= PLACEMENT_STACK_TOLERANCE_MM ? 45 : 0)));
+  });
+  const scores = distances
+    .map((entry) => ({ ...entry, score: scoreById.get(entry.blockId) || 0 }))
+    .sort((a, b) => b.score - a.score);
+  return { scores, uniqueExactBlockId: exact.length === 1 ? exact[0].blockId : null };
+}
+
+function scoreMargin(scores) {
+  return (scores[0]?.score || 0) - (scores[1]?.score || 0);
+}
+
+/**
  * @param {object} model - opened ifcModel.js model handle
  * @param {object} blockResult - detectProjectBlocks() result (must be MULTI_BLOCK)
  * @returns {{
@@ -437,6 +483,13 @@ export function buildTowerAssignments(model, blockResult) {
   const assignments = new Map();
 
   const candidates = [...blockResult.linkedBuildings, ...blockResult.unclassifiedBuildings];
+  const scaleToMM = getLengthUnitScaleToMM(model);
+  const placementEvidence = new Map(candidates.map((building) => [building.id, buildingPlacementEvidence(building, blocks, scaleToMM)]));
+  const placementStackSupport = new Map();
+  for (const evidence of placementEvidence.values()) {
+    if (evidence.uniqueExactBlockId == null) continue;
+    placementStackSupport.set(evidence.uniqueExactBlockId, (placementStackSupport.get(evidence.uniqueExactBlockId) || 0) + 1);
+  }
   const { profiles: geometryProfiles, skippedMeshCount } = buildGeometryProfiles(model, [...blocks, ...candidates]);
   const warnings = [];
   if (skippedMeshCount > 0) {
@@ -447,12 +500,16 @@ export function buildTowerAssignments(model, blockResult) {
   const missingTowerIds = blocks.filter((block) => !geometryProfiles.get(block.id)?.hull?.length).map((block) => block.id);
   if (missingTowerIds.length > 0) {
     warnings.push(
-      `${missingTowerIds.length} master tower(s) had no readable product geometry. Placement fallback was used and affected assignments require review.`
+      `${missingTowerIds.length} master tower(s) had no readable product geometry. Unique repeated placement stacks are used where available; ambiguous assignments require review.`
     );
   }
   for (const building of candidates) {
     const geometryResult = geometryTowerScores(building, blocks, geometryProfiles);
     const geometryScores = geometryResult.scores;
+    const placement = placementEvidence.get(building.id);
+    const hasSupportedPlacementStack =
+      placement.uniqueExactBlockId != null &&
+      (placementStackSupport.get(placement.uniqueExactBlockId) || 0) >= MIN_PLACEMENT_STACK_SUPPORT;
     let scores;
     let confident;
     let method;
@@ -468,6 +525,10 @@ export function buildTowerAssignments(model, blockResult) {
         insideMargin >= GEOMETRY_CONFIDENT_INSIDE_MARGIN &&
         scoreMargin >= GEOMETRY_CONFIDENT_SCORE_MARGIN;
       method = "geometry-footprint";
+    } else if (hasSupportedPlacementStack) {
+      scores = placement.scores;
+      confident = true;
+      method = "placement-stack";
     } else {
       // Geometry-less shells are uncommon but valid. Retain a placement-only
       // best guess for review; vertical evidence is deliberately excluded so
@@ -475,9 +536,16 @@ export function buildTowerAssignments(model, blockResult) {
       const xy = xyVoteScores(model, building, envelopes);
       const sortedXy = [...xy].sort((a, b) => b - a);
       const xyMargin = (sortedXy[0] ?? 0) - (sortedXy[1] ?? 0);
-      scores = blocks
+      const envelopeScores = blocks
         .map((block, i) => ({ blockId: block.id, blockGuid: block.guid, score: xy[i] }))
         .sort((a, b) => b.score - a.score);
+      // When any tower lacks an envelope, envelope voting cannot fairly
+      // compare every candidate. Use all-anchor building placements instead.
+      // Otherwise keep whichever placement signal has the clearer margin.
+      scores =
+        missingTowerIds.length > 0 || scoreMargin(placement.scores) > scoreMargin(envelopeScores)
+          ? placement.scores
+          : envelopeScores;
       const fallbackBest = scores[0];
       const fallbackSecond = scores[1] ?? { score: 0 };
       const fallbackMargin = fallbackBest.score - fallbackSecond.score;

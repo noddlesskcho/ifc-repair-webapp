@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import { closeModel, openFixture, runRepairPipeline } from "./testHelpers.js";
-import { analyze, proposalNeedsAction } from "../src/core/detector.js";
+import { analyze, proposalNeedsAction, selectRepairableProposals } from "../src/core/detector.js";
 import { detectProjectBlocks } from "../src/core/blockDetection.js";
 import { applyRepair } from "../src/core/repairer.js";
 import { WebIFC, createIfcApi, getContainedElements, getIdsOfType, getLine, openModel } from "../src/core/ifcModel.js";
@@ -102,6 +102,21 @@ describe("hierarchy-preserving repair", () => {
     expect(result.storeysUpdated).toBe(1);
     expect(result.elementsAffected).toBe(4);
     expect(result.changes[0].sourceStoreyId).toBe(first.sourceStoreyId);
+    closeModel(model);
+  });
+
+  it("uses the confidence-gated selection when a direct caller omits selected storeys", async () => {
+    const model = await openFixture("multi_block_podium.ifc");
+    const blocks = detectProjectBlocks(model);
+    const report = analyze(model, { blocks });
+    const expected = selectRepairableProposals(report);
+    const uncertainIds = new Set(
+      report.proposals.filter((proposal) => proposal.assignmentConfident === false).map((proposal) => proposal.sourceStoreyId)
+    );
+    const result = applyRepair(model, report);
+
+    expect(result.storeysUpdated).toBe(expected.length);
+    expect(result.changes.some((change) => uncertainIds.has(change.sourceStoreyId))).toBe(false);
     closeModel(model);
   });
 

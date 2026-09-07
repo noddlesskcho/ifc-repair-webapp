@@ -251,41 +251,6 @@ function showBlockUnknownWarning() {
   </div>`;
 }
 
-/**
- * Blocks the workflow when two or more detected blocks use the same
- * (normalized) IfcBuildingStorey name at different resolved FFLs -- the
- * "unsafe condition" this stage exists to catch. Never offers a way to
- * continue anyway: this is a hard gate, and renaming/coordinating levels is
- * left to the user, not auto-guessed.
- */
-function showBlockConflictWarning(blocks, comparison) {
-  loadUploadGroup.hidden = true;
-  clearLoadStatus();
-  blockWarning.hidden = false;
-  const rows = comparison.conflicts
-    .flatMap((c) => c.entries.map((e) => ({ ...e, normalizedName: c.normalizedName })))
-    .map(
-      (e) =>
-        `<tr><td>${escapeHtml(e.name)}</td><td>${escapeHtml(e.blockLabel)}</td><td>${(e.resolvedGlobalZ / 1000).toFixed(3)} m</td></tr>`
-    )
-    .join("");
-  blockWarning.innerHTML = `${WARN_ICON}<div>
-    <div class="calm-state-title">Level Naming Inconsistency</div>
-    <div class="calm-state-detail">
-      The IFC contains multiple blocks. The same BuildingStorey name is used at different FFLs across the blocks.
-      This does not follow the expected CORENET X level naming approach.
-      <p class="federation-warning-note">Please review and coordinate the level naming before continuing.</p>
-      <div class="proposal-table-scroll">
-        <table class="block-conflict-table">
-          <thead><tr><th>Storey Name</th><th>Block</th><th>FFL</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-      <button id="block-select-another" class="button primary" type="button">Select Another IFC</button>
-    </div>
-  </div>`;
-}
-
 function clearBlockWarning() {
   blockWarning.hidden = true;
   blockWarning.innerHTML = "";
@@ -303,10 +268,9 @@ blockWarning.addEventListener("click", (event) => {
  * Shown once both hard gates (federation, block detection) have already
  * passed -- a final human checkpoint before Review & Repair, rather than
  * auto-advancing straight there. Requires the acknowledgement checkbox
- * before "Continue" is enabled; never itself blocks the workflow the way
- * showFederationWarning()/showBlockConflictWarning() do.
+ * before "Continue" is enabled.
  */
-function showPreflightSummary(blocks, seconds) {
+function showPreflightSummary(blocks, seconds, storeyComparison = null) {
   loadUploadGroup.hidden = true;
   clearLoadStatus();
   preflightSummary.hidden = false;
@@ -325,6 +289,17 @@ function showPreflightSummary(blocks, seconds) {
         "tone-warn"
       )
     );
+    if (storeyComparison && !storeyComparison.pass) {
+      rows.push(
+        row(
+          WARN_ICON,
+          `${storeyComparison.conflicts.length} repeated storey name(s) occur at different FFLs across the detected blocks. ` +
+            `Names are supporting information only; tower assignment will use physical geometry and placement evidence. ` +
+            `Review the proposed matches before repairing.`,
+          "tone-warn"
+        )
+      );
+    }
   }
   const rowsHtml = rows.join("");
 
@@ -649,9 +624,9 @@ async function loadFile(name, bufferOrPromise, requestId = ++loadRequestId) {
     }
 
     // Second validation gate: identify actual block/tower buildings (never by
-    // raw IfcBuilding count -- see core/blockDetection.js) and, for a
-    // multi-block project, confirm every block uses IfcBuildingStorey names
-    // consistently before ever reaching the existing storey fixer.
+    // raw IfcBuilding count -- see core/blockDetection.js). Cross-block name
+    // inconsistencies are reported, but are not a matching authority because
+    // linked-model storey names are routinely stale or reused.
     loadProgressState = { stage: "validating-blocks", loaded: 0, total: 0 };
     renderLoadProgress();
     await nextPaint();
@@ -666,14 +641,10 @@ async function loadFile(name, bufferOrPromise, requestId = ++loadRequestId) {
       return;
     }
 
+    let storeyComparison = null;
     if (blocks.mode === "MULTI_BLOCK") {
-      const comparison = compareBlockStoreys(model, blocks.blocks);
-      console.info(`[blockDetection] ${comparison.debugLog.join("\n[blockDetection] ")}`);
-      if (!comparison.pass) {
-        endLoadProgress();
-        showBlockConflictWarning(blocks, comparison);
-        return;
-      }
+      storeyComparison = compareBlockStoreys(model, blocks.blocks);
+      console.info(`[blockDetection] ${storeyComparison.debugLog.join("\n[blockDetection] ")}`);
     }
     currentBlockResult = blocks;
 
@@ -686,7 +657,7 @@ async function loadFile(name, bufferOrPromise, requestId = ++loadRequestId) {
     endLoadProgress();
     if (detected) {
       clearLoadStatus();
-      showPreflightSummary(blocks, seconds);
+      showPreflightSummary(blocks, seconds, storeyComparison);
     } else {
       setLoadStatus(`Loaded ${name} in ${seconds}s, but detection failed.`, { error: true });
     }

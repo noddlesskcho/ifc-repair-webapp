@@ -1367,13 +1367,6 @@ body {
   text-decoration: underline;
 }
 
-.block-conflict-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-top: 0.6rem; background: var(--bg); }
-.block-conflict-table th {
-  text-align: left; background: #f3f6f8; color: var(--text-muted);
-  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em;
-}
-.block-conflict-table th, .block-conflict-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
-
 .proposal-row.row-no-change { opacity: 0.6; }
 .proposal-row.row-no-change td { background: #fafbfc; }
 .target-readonly { color: var(--text-muted); font-weight: 600; }

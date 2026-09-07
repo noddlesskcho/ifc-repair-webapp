@@ -36,6 +36,21 @@ describe("detectProjectBlocks", () => {
     closeModel(model);
   });
 
+  it("keeps a complete zero-product storey ladder as a block candidate", async () => {
+    const source = fs
+      .readFileSync(new URL("./fixtures/multi_block_podium.ifc", import.meta.url), "utf8")
+      .replace(/^#2017=.*\r?\n/m, ""); // Tower B's only product is no longer spatially contained.
+    const api = await createIfcApi();
+    const model = openModel(api, Buffer.from(source));
+    const result = detectProjectBlocks(model);
+
+    expect(result.mode).toBe("MULTI_BLOCK");
+    expect(result.blocks.map((b) => b.name).sort()).toEqual(["Tower A", "Tower B", "Tower C"]);
+    expect(result.blocks.find((b) => b.name === "Tower B").elementCount).toBe(0);
+    expect(result.unclassifiedBuildings.some((b) => b.name === "Tower B")).toBe(false);
+    closeModel(model);
+  });
+
   it("returns UNKNOWN rather than guessing when block scores decline smoothly with no confident gap", async () => {
     const model = await openFixture("ambiguous_blocks.ifc");
     const result = detectProjectBlocks(model);
@@ -129,6 +144,21 @@ describe("compareBlockStoreys", () => {
     const model = openModel(api, fs.readFileSync(masterPath));
     const result = detectProjectBlocks(model);
     expect(result.mode).toBe("SINGLE_BLOCK");
+    closeModel(model);
+  });
+
+  it("real distinct-placement reference file: detects the populated and empty tower ladders as two blocks", async () => {
+    const refPath = "C:\\Users\\ISS\\Downloads\\Multi Block Export.ifc";
+    if (!fs.existsSync(refPath)) return;
+
+    const EXPECTED = new Set(["2GpSE$G6cqQG$cxkhQKa9s", "255Ewxp09I0A7CFuDkrVw1"]);
+    const api = await createIfcApi();
+    const model = openModel(api, fs.readFileSync(refPath));
+    const result = detectProjectBlocks(model);
+
+    expect(result.mode).toBe("MULTI_BLOCK");
+    expect(new Set(result.blocks.map((b) => b.guid))).toEqual(EXPECTED);
+    expect(result.blocks.find((b) => b.guid === "255Ewxp09I0A7CFuDkrVw1").elementCount).toBe(0);
     closeModel(model);
   });
 });

@@ -8,9 +8,11 @@
  * podium/base, PPVC or typical-unit sub-models, lift/stair/refuse-chute
  * models, or empty spatial shells -- not separate towers. This module
  * identifies the actual block/tower buildings using comparative evidence
- * (storey count, resolved vertical extent, element count) rather than any
- * single signal or a fixed threshold, since a low-rise block is still a
- * genuine block and a large file can have an arbitrary base storey count.
+ * (storey count, resolved vertical extent, element count, and a small
+ * progressive-name-pattern bonus) rather than any single signal or a fixed
+ * threshold, since a low-rise block is still a genuine block, a valid master
+ * ladder may contain no products itself, and a large file can have an
+ * arbitrary base storey count.
  *
  * Deliberately does NOT use full triangulated mesh geometry (web-ifc's only
  * geometry API, StreamAllMeshes/GetFlatMesh, fully triangulates -- too
@@ -42,7 +44,7 @@ export const BLOCK_GAP_CONFIDENCE_RATIO = 0.35;
 /** A block-candidate whose own storey count is below this fraction of the cluster's max is podium-eligible. */
 const PODIUM_STOREY_RATIO = 0.5;
 
-/** Below this max/min score ratio, treat every building-with-content as a block candidate rather than hunting for a gap. */
+/** Below this max/min score ratio, treat every eligible reference ladder as a block candidate rather than hunting for a gap. */
 const UNIFORM_SPREAD_RATIO = 3;
 
 /**
@@ -82,7 +84,7 @@ function buildBuildingProfile(model, buildingId, scaleToMM) {
   const zs = storeys.map((s) => s.resolvedGlobalZ);
   const zMin = zs.length ? Math.min(...zs) : null;
   const zMax = zs.length ? Math.max(...zs) : null;
-  const pos = line?.ObjectPlacement ? worldXYZ(model, line.ObjectPlacement) : { x: 0, y: 0, z: 0 };
+  const pos = line?.ObjectPlacement ? worldXYZ(model, line.ObjectPlacement) : null;
 
   return {
     id: buildingId,
@@ -94,10 +96,42 @@ function buildBuildingProfile(model, buildingId, scaleToMM) {
     zMin,
     zMax,
     verticalExtent: zMin != null ? zMax - zMin : 0,
-    x: pos.x,
-    y: pos.y,
-    z: pos.z,
+    x: pos?.x ?? null,
+    y: pos?.y ?? null,
+    z: pos?.z ?? null,
   };
+}
+
+/**
+ * A deliberately small supporting signal for reference-storey ladders.
+ * Names never identify a block on their own: this only distinguishes a
+ * progressive sequence such as 1st/2nd/3rd Storey from repeated linked-file
+ * labels such as Base Level/Top Level after structural scoring has already
+ * established storey count and vertical extent.
+ */
+function storeyNameLadderStrength(profile) {
+  if (profile.storeys.length < 3) return 0;
+  const ordered = [...profile.storeys].sort((a, b) => a.resolvedGlobalZ - b.resolvedGlobalZ);
+  const numbers = ordered.map((storey) => {
+    const match = storey.normalizedName.match(/(?:^|\D)(\d+)(?:st|nd|rd|th)?(?:\D|$)/i);
+    return match ? Number(match[1]) : null;
+  });
+  const numeric = numbers.filter(Number.isFinite);
+  if (numeric.length >= Math.ceil(ordered.length * 0.6)) {
+    let progressive = true;
+    for (let i = 1; i < numeric.length; i++) {
+      if (numeric[i] <= numeric[i - 1]) {
+        progressive = false;
+        break;
+      }
+    }
+    if (progressive) return 1;
+  }
+
+  // Non-numeric ladders (Ground/Mezzanine/Roof, for example) still provide
+  // weak evidence when most labels are distinct, but only half the bonus.
+  const uniqueRatio = new Set(ordered.map((storey) => storey.normalizedName).filter(Boolean)).size / ordered.length;
+  return uniqueRatio >= 0.8 ? 0.5 : 0;
 }
 
 function scoreOf(profile) {
@@ -106,7 +140,8 @@ function scoreOf(profile) {
   // sub-model is short on at least one axis). Element count breaks ties
   // between otherwise-similar candidates without dominating the score on its
   // own, since a busy but short/small building shouldn't outrank a tower.
-  return profile.storeyCount * Math.max(profile.verticalExtent, 1) * (1 + Math.log1p(profile.elementCount) / 20);
+  const structural = profile.storeyCount * Math.max(profile.verticalExtent, 1) * (1 + Math.log1p(profile.elementCount) / 20);
+  return structural * (1 + 0.1 * storeyNameLadderStrength(profile));
 }
 
 function emptyResult(mode, debugLog, extra = {}) {
@@ -136,67 +171,56 @@ export function detectProjectBlocks(model) {
 
     const profiles = buildingIds.map((id) => buildBuildingProfile(model, id, scaleToMM));
 
-    const unclassifiedBuildings = profiles.filter((p) => p.elementCount === 0);
+    const emptyBuildings = profiles.filter((p) => p.elementCount === 0);
     const withContent = profiles.filter((p) => p.elementCount > 0);
-    debugLog.push(`Empty (zero-element) buildings: ${unclassifiedBuildings.length}`);
+    debugLog.push(`Empty (zero-element) buildings: ${emptyBuildings.length}`);
 
     // A single storey has no internal vertical range at all -- the spec's own
     // "linked/typical model" evidence list is "only 1-3 storeys, small local
     // vertical range", and one storey is the most extreme, unambiguous case
     // of that (not a "block/tower" candidate, which needs "storeys spanning
-    // several elevations"). A building this small never enters scoring, even
-    // if it happens to hold real elements -- a Revit linked-branch copy
-    // commonly does.
-    const eligible = withContent.filter((p) => p.storeyCount >= 2);
-    const tooSmall = withContent.filter((p) => p.storeyCount < 2);
+    // several elevations"). Buildings with two or more storeys enter the
+    // comparative scoring regardless of product count: Revit can export a
+    // real block's storey ladder as an empty IfcBuilding while its products
+    // live entirely in sibling linked-instance buildings.
+    const eligible = profiles.filter((p) => p.storeyCount >= 2);
+    const tooSmallLinked = withContent.filter((p) => p.storeyCount < 2);
+    const tooSmallUnclassified = emptyBuildings.filter((p) => p.storeyCount < 2);
 
     if (eligible.length === 0) {
-      // Nothing with real content is even eligible. This is the common
-      // "master building holds no elements directly -- its real content all
-      // lives in linked branches" shape (exactly what this tool's existing
-      // storey fixer already exists to repair): fall back to the same
-      // structural signal detector.js's own master-building selection uses
-      // (most storeys) among the zero-element buildings, rather than
-      // reporting UNKNOWN just because nothing *with elements* stood out.
-      const masterCandidates = unclassifiedBuildings.filter((p) => p.storeyCount >= 2);
-      const maxStoreys = masterCandidates.length ? Math.max(...masterCandidates.map((p) => p.storeyCount)) : 0;
-      const winners = masterCandidates.filter((p) => p.storeyCount === maxStoreys);
-
-      if (winners.length === 1) {
-        const master = winners[0];
+      // A genuinely single-building, single-storey file is still a valid
+      // SINGLE_BLOCK model. With several shallow buildings there is no
+      // defensible reference ladder, so stop instead of guessing.
+      if (profiles.length === 1) {
+        const master = profiles[0];
         debugLog.push(
-          `No building with elements has >=2 storeys. Building ${master.guid} (#${master.id}) is the sole zero-element ` +
-            `building with the most storeys (${master.storeyCount}) -- treated as the structural master -> SINGLE_BLOCK.`
+          `Building ${master.guid} (#${master.id}) is the only building; its shallow storey structure is treated as SINGLE_BLOCK.`
         );
         return {
           mode: "SINGLE_BLOCK",
           blocks: [master],
           baseBuildings: [],
-          linkedBuildings: tooSmall,
-          unclassifiedBuildings: unclassifiedBuildings.filter((p) => p !== master),
+          linkedBuildings: [],
+          unclassifiedBuildings: [],
           evidence: debugLog,
           debugLog,
         };
       }
 
-      debugLog.push(
-        winners.length > 1
-          ? `${winners.length} zero-element buildings tie for the most storeys (${maxStoreys}) -- cannot pick a structural master.`
-          : "No building (with or without elements) has >=2 storeys."
-      );
+      debugLog.push("No building has two or more storeys; no reference ladder can be identified.");
       debugLog.push("Detected mode: UNKNOWN (cannot reliably distinguish block buildings)");
-      return emptyResult("UNKNOWN", debugLog, { unclassifiedBuildings, linkedBuildings: tooSmall });
+      return emptyResult("UNKNOWN", debugLog, { unclassifiedBuildings: tooSmallUnclassified, linkedBuildings: tooSmallLinked });
     }
 
     if (eligible.length === 1) {
       const only = eligible[0];
-      debugLog.push(`Building ${only.guid} (#${only.id}): only eligible building with content -> SINGLE_BLOCK`);
+      debugLog.push(`Building ${only.guid} (#${only.id}): only building with a reference-storey ladder -> SINGLE_BLOCK`);
       return {
         mode: "SINGLE_BLOCK",
         blocks: [only],
         baseBuildings: [],
-        linkedBuildings: tooSmall,
-        unclassifiedBuildings,
+        linkedBuildings: tooSmallLinked,
+        unclassifiedBuildings: tooSmallUnclassified,
         evidence: debugLog,
         debugLog,
       };
@@ -216,7 +240,7 @@ export function detectProjectBlocks(model) {
     // A gap only means something when there's a wide spread to split -- with
     // no wide spread at all (e.g. two similarly-sized towers and nothing else
     // in the file), there's no "insignificant" subgroup to separate from, so
-    // every building with content is a block candidate by default. Only fall
+    // every eligible reference ladder is a block candidate by default. Only fall
     // back to hunting for a relative-drop split once the scores actually
     // span a meaningful range; a spread that wide with no confident split is
     // the genuinely ambiguous case (-> UNKNOWN), not a uniform one.
@@ -227,7 +251,7 @@ export function detectProjectBlocks(model) {
     if (spreadRatio < UNIFORM_SPREAD_RATIO) {
       debugLog.push(
         `Score spread ${spreadRatio.toFixed(2)}x is below the uniform threshold (${UNIFORM_SPREAD_RATIO}x) -- treating all ` +
-          `${scored.length} building(s) with content as block candidates.`
+          `${scored.length} building(s) with reference ladders as block candidates.`
       );
       cluster = scored.map((s) => s.profile);
       rest = [];
@@ -247,7 +271,10 @@ export function detectProjectBlocks(model) {
           `Score spread ${spreadRatio.toFixed(2)}x, but no confident gap found (best relative drop ${(bestDrop * 100).toFixed(1)}%, need >= ${BLOCK_GAP_CONFIDENCE_RATIO * 100}%).`
         );
         debugLog.push("Detected mode: UNKNOWN (cannot reliably distinguish block buildings)");
-        return emptyResult("UNKNOWN", debugLog, { unclassifiedBuildings, linkedBuildings: [...eligible, ...tooSmall] });
+        return emptyResult("UNKNOWN", debugLog, {
+          unclassifiedBuildings: [...eligible.filter((p) => p.elementCount === 0), ...tooSmallUnclassified],
+          linkedBuildings: [...eligible.filter((p) => p.elementCount > 0), ...tooSmallLinked],
+        });
       }
 
       debugLog.push(
@@ -282,11 +309,15 @@ export function detectProjectBlocks(model) {
       }
     }
     cluster = survivors;
-    const finalLinked = [...rest, ...tooSmall];
+    // Keep roles disjoint. Empty non-anchor shells remain visible for report
+    // and assignment diagnostics, but are never described as linked product
+    // buildings merely because they lost the comparative score split.
+    const finalLinked = [...rest.filter((p) => p.elementCount > 0), ...tooSmallLinked];
+    const finalUnclassified = [...rest.filter((p) => p.elementCount === 0), ...tooSmallUnclassified];
 
     if (cluster.length === 0) {
       debugLog.push("Detected mode: UNKNOWN (block candidates were all reclassified as base/podium)");
-      return emptyResult("UNKNOWN", debugLog, { unclassifiedBuildings, baseBuildings, linkedBuildings: finalLinked });
+      return emptyResult("UNKNOWN", debugLog, { unclassifiedBuildings: finalUnclassified, baseBuildings, linkedBuildings: finalLinked });
     }
 
     if (cluster.length === 1) {
@@ -296,7 +327,7 @@ export function detectProjectBlocks(model) {
         blocks: cluster,
         baseBuildings,
         linkedBuildings: finalLinked,
-        unclassifiedBuildings,
+        unclassifiedBuildings: finalUnclassified,
         evidence: debugLog,
         debugLog,
       };
@@ -308,7 +339,7 @@ export function detectProjectBlocks(model) {
       blocks: cluster,
       baseBuildings,
       linkedBuildings: finalLinked,
-      unclassifiedBuildings,
+      unclassifiedBuildings: finalUnclassified,
       evidence: debugLog,
       debugLog,
     };

@@ -115,6 +115,7 @@ import {
   name as entityName,
 } from "./ifcModel.js";
 import { buildTowerAssignments } from "./towerAssignment.js";
+import { compareBlockStoreys } from "./blockDetection.js";
 
 export const DEFAULT_STOREY_MATCH_TOLERANCE = 150; // mm: boundary-snapping tolerance only (see file header's "Tolerance" section)
 
@@ -550,17 +551,21 @@ export function analyze(
     return [storeys.length, total];
   }
 
-  // Master detection is deliberately structural (most storeys, then most
-  // elements) rather than name- or site-based: a linked branch can live
-  // under its own IfcSite distinct from the master's, and level names in
-  // linked storeys are not trustworthy, so neither signal is used here.
-  let master = buildingIds[0];
-  let masterScore = score(master);
-  for (const bId of buildingIds.slice(1)) {
-    const s = score(bId);
-    if (s[0] > masterScore[0] || (s[0] === masterScore[0] && s[1] > masterScore[1])) {
-      master = bId;
-      masterScore = s;
+  // A supplied preflight result is authoritative. Running a second master
+  // selector here previously allowed preflight to identify one building but
+  // repair to silently switch to another (notably when an empty reference
+  // ladder had more storeys). The fallback remains only for direct API
+  // callers that do not provide block detection.
+  let master = blocks?.mode === "SINGLE_BLOCK" ? blocks.blocks[0]?.id : null;
+  if (master == null) {
+    master = buildingIds[0];
+    let masterScore = score(master);
+    for (const bId of buildingIds.slice(1)) {
+      const s = score(bId);
+      if (s[0] > masterScore[0] || (s[0] === masterScore[0] && s[1] > masterScore[1])) {
+        master = bId;
+        masterScore = s;
+      }
     }
   }
 
@@ -584,8 +589,12 @@ export function analyze(
   const linkedBranches = [];
   const proposals = [];
 
-  for (const bId of buildingIds) {
-    if (bId === master) continue;
+  const candidateBuildingIds =
+    blocks?.mode === "SINGLE_BLOCK"
+      ? [...new Set([...blocks.linkedBuildings, ...blocks.unclassifiedBuildings].map((building) => building.id))]
+      : buildingIds.filter((bId) => bId !== master);
+
+  for (const bId of candidateBuildingIds) {
     const storeyIds = storeysByBuilding.get(bId);
     const storeyInfos = storeyIds.map((sId) => buildStoreyInfo(model, bId, sId, scaleToMM));
     const directElements = getContainedElements(model, bId);
@@ -669,6 +678,16 @@ export function analyze(
 function analyzeMultiBlock(model, blockResult, { storeyMatchTolerance, sourceName, overrides }) {
   const scaleToMM = getLengthUnitScaleToMM(model);
   const warnings = [];
+  const storeyNameComparison = compareBlockStoreys(model, blockResult.blocks);
+  for (const conflict of storeyNameComparison.conflicts) {
+    const details = conflict.entries
+      .map((entry) => `${entry.blockLabel} '${entry.name}' at ${fmt(entry.resolvedGlobalZ)} mm`)
+      .join("; ");
+    warnings.push(
+      `Storey name '${conflict.normalizedName}' is reused at different FFLs across blocks (${details}). ` +
+        "The name was treated as supporting information only; verify the physically derived tower assignments."
+    );
+  }
   const { towerGroups: rawGroups, assignments, warnings: assignmentWarnings = [] } = buildTowerAssignments(model, blockResult);
   warnings.push(...assignmentWarnings);
 
@@ -772,6 +791,7 @@ function analyzeMultiBlock(model, blockResult, { storeyMatchTolerance, sourceNam
     linkedBranches,
     proposals,
     warnings,
+    storeyNameComparison,
     repairNeeded,
     totalStoreysToUpdate: actionableProposals.length,
     totalElementsAffected,
