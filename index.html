@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IFC Linked-Branch Repair Tool</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏢</text></svg>" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-topbar">
+        <div>
+          <h1>IFC Linked-Branch Repair</h1>
+          <p>Corrects linked-storey names while preserving each original IFC site, building and element hierarchy. Runs entirely in your browser.</p>
+        </div>
+      </header>
+
+      <div class="app-body">
+        <nav class="stepper" aria-label="Workflow steps">
+          <ol id="stepper-list">
+            <li class="stepper-item" data-step="1">
+              <span class="stepper-marker">
+                <svg class="stepper-check" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span class="stepper-number">1</span>
+              </span>
+              <span class="stepper-label">Load IFC</span>
+            </li>
+            <li class="stepper-item" data-step="2">
+              <span class="stepper-marker">
+                <svg class="stepper-check" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span class="stepper-number">2</span>
+              </span>
+              <span class="stepper-label">Review &amp; Repair</span>
+            </li>
+            <li class="stepper-item" data-step="3">
+              <span class="stepper-marker">
+                <svg class="stepper-check" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span class="stepper-number">3</span>
+              </span>
+              <span class="stepper-label">Export</span>
+            </li>
+          </ol>
+        </nav>
+
+        <main class="workflow-main">
+          <!-- Step 1: Load IFC -->
+          <section id="step-1" class="step-panel">
+            <div id="step-1-full">
+              <h2 class="step-title">Load IFC</h2>
+
+              <div id="load-upload-group">
+                <div id="dropzone" class="dropzone">
+                  <svg class="dropzone-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0-12l-4 4m4-4l4 4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <p class="dropzone-title">Drag &amp; drop your IFC file here</p>
+                  <button id="choose-file-button" class="button primary" type="button">Choose IFC File</button>
+                  <input id="file-input" type="file" accept=".ifc,.ifcxml" hidden />
+                  <p class="dropzone-samples">Or try a sample: <a href="#" id="sample-clean">clean file</a> &middot; <a href="#" id="sample-linked">linked-branch defect</a></p>
+                </div>
+
+                <p class="privacy-note">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a3 3 0 0 0-3 3V6H4.5A1.5 1.5 0 0 0 3 7.5v5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 11.5 6H11V4.5a3 3 0 0 0-3-3zm0 1.2a1.8 1.8 0 0 1 1.8 1.8V6H6.2V4.5A1.8 1.8 0 0 1 8 2.7z" fill="currentColor"/></svg>
+                  Runs locally in your browser. Your IFC file is not uploaded.
+                </p>
+
+                <div id="load-progress-block" class="progress-block">
+                  <div class="robot-scene robot-scene-progress" aria-hidden="true">
+                    <svg class="robot waiting" id="robot-load" viewBox="0 0 64 44">
+                      <g class="robot-legs">
+                        <rect class="robot-leg robot-leg-l" x="19" y="30" width="6" height="9" rx="1.5" />
+                        <rect class="robot-leg robot-leg-r" x="29" y="30" width="6" height="9" rx="1.5" />
+                      </g>
+                      <g class="robot-body-group">
+                        <rect class="robot-body" x="14" y="14" width="24" height="17" rx="4" />
+                        <rect class="robot-head" x="19" y="4" width="14" height="12" rx="3" />
+                        <circle class="robot-eye" cx="23.5" cy="10" r="1.3" />
+                        <circle class="robot-eye" cx="29.5" cy="10" r="1.3" />
+                        <line class="robot-antenna" x1="26" y1="4" x2="26" y2="0.5" />
+                        <circle class="robot-antenna-tip" cx="26" cy="0.5" r="1.3" />
+                        <g class="robot-arm">
+                          <rect x="36" y="17" width="9" height="5" rx="2" />
+                        </g>
+                        <rect class="robot-block" x="44" y="12" width="11" height="11" rx="2" />
+                      </g>
+                    </svg>
+                    <div class="robot-baseline"></div>
+                  </div>
+                  <div id="load-progress-bars" hidden>
+                    <div class="progress-bar-track">
+                      <div id="load-progress-bar-fill" class="progress-bar-fill indeterminate"></div>
+                    </div>
+                    <div class="progress-meta">
+                      <span id="load-progress-operation">Loading your file&hellip;</span>
+                      <span id="load-progress-percent"></span>
+                    </div>
+                  </div>
+                </div>
+
+                <p id="load-status" class="status" aria-live="polite">
+                  <span id="load-spinner" class="spinner" hidden></span>
+                  <span id="load-status-text">Initializing IFC engine&hellip;</span>
+                </p>
+              </div>
+
+              <div id="federation-warning" class="calm-state tone-danger" hidden></div>
+              <div id="block-warning" class="calm-state tone-danger" hidden></div>
+              <div id="preflight-summary" class="block" hidden></div>
+            </div>
+
+            <div id="step-1-collapsed" class="file-card" hidden>
+              <svg class="file-card-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M15 2v5h5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+              <div class="file-card-info">
+                <div id="file-card-name" class="file-card-name"></div>
+                <div id="file-card-meta" class="file-card-meta"></div>
+              </div>
+              <span class="file-card-badge">Loaded</span>
+              <button id="change-file-button" class="button ghost small" type="button">Change file</button>
+            </div>
+          </section>
+
+          <!-- Step 2: Review & Repair -->
+          <section id="step-2" class="step-panel" hidden>
+            <div id="step-2-full">
+              <h2 class="step-title">Review &amp; Repair</h2>
+
+              <div id="detection-chips" class="chip-row"></div>
+
+              <div id="detection-warnings" class="calm-state tone-warn" hidden></div>
+
+              <div id="detection-calm-state" class="calm-state" hidden></div>
+
+              <details id="detection-diagram-block" class="block elevation-disclosure">
+                <summary>Master elevation map</summary>
+                <div id="elevation-diagram-container" class="elevation-diagram-container"></div>
+              </details>
+
+              <div id="detection-mapping-block" class="block">
+                <h3 class="block-title">Proposed changes</h3>
+                <label class="guid-filter">Filter
+                  <input id="guid-filter" type="search" placeholder="Site, building, level name or GUID" autocomplete="off" />
+                </label>
+                <div id="confirm-uncertain-block" class="confirm-uncertain-block" hidden>
+                  <span id="confirm-uncertain-text"></span>
+                  <button id="confirm-uncertain-button" class="button ghost small" type="button">Confirm all shown</button>
+                </div>
+                <div id="mapping-list" class="mapping-list" tabindex="0"></div>
+              </div>
+
+              <div class="advanced-settings">
+                <button id="advanced-settings-toggle" class="advanced-toggle" type="button" aria-expanded="false" aria-controls="advanced-settings-panel">
+                  <svg class="advanced-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span>Advanced settings</span>
+                  <span id="advanced-settings-hint" class="advanced-hint">Tolerance: 150mm</span>
+                </button>
+                <div id="advanced-settings-panel" class="advanced-panel" hidden>
+                  <div class="field-row">
+                    <span>Matching tolerance</span>
+                    <span class="field-input-group">
+                      <input id="tolerance-input" type="number" value="150" min="0" step="5" />
+                      <span class="field-unit">mm</span>
+                    </span>
+                  </div>
+                  <p class="hint">
+                    Used only to snap a reference elevation that lands very close to a master storey's boundary onto
+                    that boundary. It does not widen how far an element can be matched into the interior of a
+                    storey's interval -- an element's reference can sit any distance above its matched storey's
+                    elevation, as long as no other master storey elevation falls in between.
+                  </p>
+                </div>
+              </div>
+
+              <div id="repair-progress-block" class="progress-block" hidden>
+                <div class="robot-scene robot-scene-progress" aria-hidden="true">
+                  <svg class="robot" id="robot-progress" viewBox="0 0 64 44">
+                    <g class="robot-legs">
+                      <rect class="robot-leg robot-leg-l" x="19" y="30" width="6" height="9" rx="1.5" />
+                      <rect class="robot-leg robot-leg-r" x="29" y="30" width="6" height="9" rx="1.5" />
+                    </g>
+                    <g class="robot-body-group">
+                      <rect class="robot-body" x="14" y="14" width="24" height="17" rx="4" />
+                      <rect class="robot-head" x="19" y="4" width="14" height="12" rx="3" />
+                      <circle class="robot-eye" cx="23.5" cy="10" r="1.3" />
+                      <circle class="robot-eye" cx="29.5" cy="10" r="1.3" />
+                      <line class="robot-antenna" x1="26" y1="4" x2="26" y2="0.5" />
+                      <circle class="robot-antenna-tip" cx="26" cy="0.5" r="1.3" />
+                      <g class="robot-arm">
+                        <rect x="36" y="17" width="9" height="5" rx="2" />
+                      </g>
+                      <rect class="robot-block" x="44" y="12" width="11" height="11" rx="2" />
+                    </g>
+                  </svg>
+                  <div class="robot-baseline"></div>
+                </div>
+                <div class="progress-bar-track">
+                  <div id="progress-bar-fill" class="progress-bar-fill indeterminate"></div>
+                </div>
+                <div class="progress-meta">
+                  <span id="progress-operation">Repairing your file&hellip;</span>
+                  <span id="progress-percent"></span>
+                </div>
+              </div>
+
+              <div id="repair-error" class="calm-state tone-danger" hidden></div>
+
+              <p id="pending-confirmation-note" class="pending-confirmation-note" hidden></p>
+
+              <div class="step-actions">
+                <button id="repair-button" class="button primary" type="button">Repair IFC</button>
+              </div>
+            </div>
+
+            <div id="step-2-collapsed" class="file-card" hidden></div>
+          </section>
+
+          <!-- Step 3: Export -->
+          <section id="step-3" class="step-panel" hidden>
+            <h2 class="step-title">Export</h2>
+            <div id="step-3-status" class="calm-state"></div>
+
+            <div class="step-actions">
+              <button id="export-button" class="button primary" type="button">Download Fixed IFC</button>
+              <button id="export-pdf-button" class="button ghost" type="button" disabled>PDF Report</button>
+              <button id="export-csv-button" class="button ghost" type="button" disabled>CSV Report</button>
+            </div>
+
+            <p class="reminder-note">Your original IFC file was not modified &mdash; export always creates a new file.</p>
+          </section>
+        </main>
+      </div>
+
+      <footer class="app-footer">
+        Runs 100% client-side using <a href="https://github.com/ThatOpen/engine_web-ifc" target="_blank" rel="noopener">web-ifc</a> (WASM). No file is ever sent to a server.
+      </footer>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

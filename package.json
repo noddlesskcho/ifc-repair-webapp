@@ -1,0 +1,24 @@
+{
+  "name": "ifc-repair-webapp",
+  "version": "1.1.0",
+  "description": "Detects and repairs Revit-exported IFC files where linked model instances were exported as separate spatial branches instead of being placed on the master building's storeys.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
+    "web-ifc": "^0.0.77"
+  },
+  "devDependencies": {
+    "vite": "^8.2.2",
+    "vitest": "^5.0.0"
+  }
+}
