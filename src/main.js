@@ -28,8 +28,6 @@ const loadProgressBars = el("load-progress-bars");
 const robotLoad = el("robot-load");
 const loadProgressBarFill = el("load-progress-bar-fill");
 const loadProgressPercent = el("load-progress-percent");
-const sampleCleanLink = el("sample-clean");
-const sampleLinkedLink = el("sample-linked");
 const step1Full = el("step-1-full");
 const step1Collapsed = el("step-1-collapsed");
 const fileCardName = el("file-card-name");
@@ -519,15 +517,6 @@ fileInput.addEventListener("change", () => {
   if (file) loadFile(file.name, file);
 });
 
-sampleCleanLink.addEventListener("click", (e) => {
-  e.preventDefault();
-  loadSample("samples/clean_master_only.ifc", "clean_master_only.ifc (sample)");
-});
-sampleLinkedLink.addEventListener("click", (e) => {
-  e.preventDefault();
-  loadSample("samples/linked_branches_defect.ifc", "linked_branches_defect.ifc (sample)");
-});
-
 /**
  * Reads a local File with real, byte-level progress (FileReader reports
  * `loaded`/`total` as the browser streams it off disk) -- meaningful for a
@@ -544,32 +533,6 @@ function readFileWithProgress(file, onProgress) {
     reader.onerror = () => reject(reader.error || new Error("Failed to read the file"));
     reader.readAsArrayBuffer(file);
   });
-}
-
-/** Same idea as readFileWithProgress(), but for a fetched (sample) file. */
-async function fetchWithProgress(url, onProgress) {
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  const total = Number(resp.headers.get("content-length")) || 0;
-  if (!resp.body || total === 0) return await resp.arrayBuffer(); // no length/stream available -- fall back silently
-
-  const reader = resp.body.getReader();
-  const chunks = [];
-  let loaded = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    loaded += value.length;
-    onProgress(loaded, total);
-  }
-  const buffer = new Uint8Array(loaded);
-  let offset = 0;
-  for (const chunk of chunks) {
-    buffer.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return buffer.buffer;
 }
 
 let loadProgressState = { stage: null, loaded: 0, total: 0 };
@@ -620,30 +583,6 @@ function endLoadProgress() {
   resetRobotProgress(robotLoad); // back to its always-visible idle routine
 }
 
-async function loadSample(url, label) {
-  if (!ifcApi) {
-    setLoadStatus("IFC engine is still initializing, please wait...");
-    return;
-  }
-  const requestId = ++loadRequestId;
-  beginLoadProgress();
-  await nextPaint();
-  try {
-    const buffer = await fetchWithProgress(import.meta.env.BASE_URL + url, (loaded, total) => {
-      if (requestId !== loadRequestId) return;
-      loadProgressState = { stage: "reading", loaded, total };
-      renderLoadProgress();
-    });
-    if (requestId !== loadRequestId) return;
-    await loadFile(label, buffer, requestId);
-  } catch (e) {
-    if (requestId !== loadRequestId) return;
-    endLoadProgress();
-    setLoadStatus(`Failed to load sample: ${e.message}`, { error: true });
-    console.error(e);
-  }
-}
-
 async function loadFile(name, bufferOrPromise, requestId = ++loadRequestId) {
   if (!ifcApi) {
     setLoadStatus("IFC engine is still initializing, please wait...");
@@ -653,9 +592,6 @@ async function loadFile(name, bufferOrPromise, requestId = ++loadRequestId) {
   clearBlockWarning();
   clearPreflightSummary();
   const isFile = bufferOrPromise instanceof File;
-  // Called directly with a File (drag/drop, file picker): start the progress
-  // UI here. Called from loadSample() with an already-fetched buffer: it
-  // already started (and drove) the progress UI itself through the fetch.
   if (loadProgressBars.hidden) beginLoadProgress();
 
   const startedAt = performance.now();

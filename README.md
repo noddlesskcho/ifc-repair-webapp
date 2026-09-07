@@ -80,9 +80,8 @@ completed ones collapse to a compact summary (Step 1 becomes a one-line file
 card). Click back into any completed step to change a setting and redo the
 rest.
 
-1. **Load IFC** — drag & drop, click "Choose IFC File…", or try one of the two
-   bundled samples. Detection runs automatically and the app advances to Step
-   2.
+1. **Load IFC** — drag & drop or click "Choose IFC File…". Detection runs
+   automatically and the app advances to Step 2.
 2. **Review & Repair** — summary chips, a collapsible master elevation list,
    and proposal tables grouped by linked building. Matched and review-required
    rows can be searched by GUID, and uncertain tower assignments or duplicate
@@ -178,8 +177,6 @@ tests/
   detector.test.js, repairer.test.js, classification.test.js,
   elevationDiagram.test.js, report.test.js, progress.test.js, audit.test.js
 public/
-  samples/                the same two sample files, served for the in-app
-                         "try a sample" links
   web-ifc*.wasm           the web-ifc WASM binaries (copied here, not fetched
                          from a CDN, so the whole app is self-contained and
                          works offline once loaded)

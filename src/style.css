@@ -329,22 +329,6 @@ body {
   color: var(--text);
 }
 
-.dropzone-samples {
-  margin: 0.85rem 0 0;
-  font-size: 0.83rem;
-  color: var(--text-muted);
-}
-
-.dropzone-samples a {
-  color: var(--accent);
-  text-decoration: none;
-  font-weight: 600;
-}
-
-.dropzone-samples a:hover {
-  text-decoration: underline;
-}
-
 .privacy-note {
   display: flex;
   align-items: center;
