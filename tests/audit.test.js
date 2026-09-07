@@ -86,7 +86,7 @@ describe("validateRepair", () => {
     result.renameChanges[0].sourcePlacementRef = -999;
 
     const checks = validateRepair(reloaded, result);
-    const identityCheck = checks.find((c) => c.name === "Linked storey renames preserve hierarchy");
+    const identityCheck = checks.find((c) => c.name === "Linked branch repair preserves product identity and target hierarchy");
     expect(identityCheck.passed).toBe(false);
 
     closeModel(reloaded);

@@ -133,7 +133,7 @@ describe("detector -- MULTI_BLOCK mode", () => {
     closeModel(model);
   });
 
-  it("allows equal target names in separate linked buildings without merging their hierarchy", async () => {
+  it("allows equal target names in separate linked buildings to merge into the shared block storey", async () => {
     const model = await openFixture("multi_block_podium.ifc");
     const blockResult = detectProjectBlocks(model);
     expect(blockResult.mode).toBe("MULTI_BLOCK");
@@ -143,7 +143,7 @@ describe("detector -- MULTI_BLOCK mode", () => {
     expect(towerA.length).toBeGreaterThan(1);
     expect(new Set(towerA.map((p) => p.sourceBuildingId)).size).toBeGreaterThan(1);
     for (const p of towerA) {
-      expect(p.repairStrategy).toBe("rename");
+      expect(p.repairStrategy).toBe("merge");
       expect(p.sameParentCollision).toBe(false);
     }
     closeModel(model);
@@ -210,6 +210,8 @@ describe("detector -- MULTI_BLOCK mode", () => {
     const selected = selectRepairableProposals(report);
 
     expect(report.blocksMode).toBe("MULTI_BLOCK");
+    expect(report.proposals).toHaveLength(11);
+    expect(report.proposals.some((proposal) => proposal.sourceBuildingId === 27)).toBe(false);
     expect(selected).toHaveLength(11);
     expect(selected.reduce((sum, proposal) => sum + proposal.elementCount, 0)).toBe(99);
     expect(selected.filter((proposal) => proposal.sourceBlockGuid === "2GpSE$G6cqQG$cxkhQKa9s")).toHaveLength(4);

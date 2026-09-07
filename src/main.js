@@ -42,9 +42,6 @@ const detectionDiagramBlock = el("detection-diagram-block");
 const elevationDiagramContainer = el("elevation-diagram-container");
 const detectionMappingBlock = el("detection-mapping-block");
 const mappingList = el("mapping-list");
-const confirmUncertainBlock = el("confirm-uncertain-block");
-const confirmUncertainText = el("confirm-uncertain-text");
-const confirmUncertainButton = el("confirm-uncertain-button");
 const advancedSettingsBlock = document.querySelector(".advanced-settings");
 const advancedSettingsToggle = el("advanced-settings-toggle");
 const advancedSettingsPanel = el("advanced-settings-panel");
@@ -797,29 +794,12 @@ function renderStep2() {
     pendingConfirmationNote.hidden = false;
     pendingConfirmationNote.textContent =
       `${pending} level(s) were matched to a block with low confidence and still need your confirmation before ` +
-      `repairing -- see "Needs Review" above ("Confirm all shown" there, or review them individually).`;
+      `repairing -- review each row under "Needs Review" and explicitly select its target level.`;
   } else {
     repairButton.disabled = false;
     pendingConfirmationNote.hidden = true;
     pendingConfirmationNote.textContent = "";
   }
-}
-
-/**
- * Rows that landed in "Needs review" purely because their tower assignment
- * wasn't confident (see detector.js's selectRepairableProposals) -- not
- * because they're genuinely unmatched or have a large FFL gap. These already
- * have a real best-guess target; reviewing 300+ of them one row at a time
- * via the per-row "Change" control isn't practical, so this list backs a
- * single "confirm all shown" action instead. Confirming just means setting
- * the SAME best-guess target as a manual override -- it does not change
- * what target gets used, only that the user has looked at (a filtered view
- * of) them and accepted it as this run's confirmation.
- */
-function uncertainButResolvedProposals() {
-  return filterProposals(report, "review", guidFilter.value).filter(
-    (p) => p.assignmentConfident === false && p.targetStoreyId != null && !p.manualOverride
-  );
 }
 
 /** Renders the Master elevation map: tower tabs (multi-block only) plus the active tower's (or the single master's) elevation list. */
@@ -844,22 +824,7 @@ function renderMappingList() {
   if (reviewValue) reviewValue.textContent = String(filterProposals(report, "review", guidFilter.value).length);
   mappingList.innerHTML = renderProposalTable(report, mappingCategory, guidFilter.value, mappingSort, mappingMatchFilter, expandedBuildingIds);
 
-  const uncertain = mappingCategory === "review" ? uncertainButResolvedProposals() : [];
-  confirmUncertainBlock.hidden = uncertain.length === 0;
-  if (uncertain.length > 0) {
-    confirmUncertainText.textContent =
-      `${uncertain.length} level(s) shown here have a proposed match, but the tower they were assigned to wasn't ` +
-      `confident. Spot-check a few above, then confirm the rest at once if they look right.`;
-  }
 }
-
-confirmUncertainButton.addEventListener("click", () => {
-  const uncertain = uncertainButResolvedProposals();
-  if (uncertain.length === 0) return;
-  const additions = Object.fromEntries(uncertain.map((p) => [p.sourceStoreyId, p.targetStoreyId]));
-  levelOverrides = { ...levelOverrides, ...additions };
-  if (runDetection()) renderStep2();
-});
 
 // -- repair (runs in a Worker) -----------------------------------------------
 
@@ -1030,7 +995,13 @@ function renderStep3() {
 
   step3Status.className = "calm-state tone-ok";
   if (repaired) {
-    step3Status.innerHTML = `${CHECK_ICON}<div><div class="calm-state-title">Repair completed</div><div class="calm-state-detail">${outcome.result.storeysUpdated} linked storey name(s) updated. Original site hierarchy, element containment and geometry were preserved.</div></div>`;
+    const merged = outcome.result.mergeChanges?.length || 0;
+    const renamed = outcome.result.renameChanges?.length || 0;
+    const details = [
+      merged > 0 ? `${merged} nested branch(es) merged into matched block storeys` : "",
+      renamed > 0 ? `${renamed} linked storey name(s) updated in place` : "",
+    ].filter(Boolean).join("; ");
+    step3Status.innerHTML = `${CHECK_ICON}<div><div class="calm-state-title">Repair completed</div><div class="calm-state-detail">${details}. Product GUIDs, placements and original IfcSite boundaries were preserved.</div></div>`;
   } else {
     step3Status.innerHTML = `${CHECK_ICON}<div><div class="calm-state-title">No changes were needed</div><div class="calm-state-detail">This file already matched the expected structure.</div></div>`;
   }

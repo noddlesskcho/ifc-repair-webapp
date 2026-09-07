@@ -1235,21 +1235,6 @@ body {
 .guid-filter { display: grid; gap: 6px; font-size: 0.8rem; margin: 16px 0; color: var(--text-muted); }
 .guid-filter input { width: 100%; box-sizing: border-box; border: 1px solid var(--border-strong); border-radius: 4px; padding: 10px 12px; font: inherit; background: #fff; color: var(--text); }
 
-.confirm-uncertain-block {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  background: #fff8ea;
-  border: 1px solid #f0d999;
-  border-radius: var(--radius);
-  padding: 0.65rem 0.85rem;
-  margin-bottom: 12px;
-  font-size: 0.82rem;
-  color: #6b4a00;
-}
-.confirm-uncertain-block button { flex: 0 0 auto; }
-
 .pending-confirmation-note {
   background: #fff8ea;
   border: 1px solid #f0d999;

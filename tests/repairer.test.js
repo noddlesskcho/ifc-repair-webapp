@@ -3,8 +3,9 @@ import { describe, expect, it } from "vitest";
 import { closeModel, openFixture, runRepairPipeline } from "./testHelpers.js";
 import { analyze, proposalNeedsAction, selectRepairableProposals } from "../src/core/detector.js";
 import { detectProjectBlocks } from "../src/core/blockDetection.js";
-import { applyRepair } from "../src/core/repairer.js";
-import { WebIFC, createIfcApi, getContainedElements, getIdsOfType, getLine, openModel } from "../src/core/ifcModel.js";
+import { applyRepair, validateRepair } from "../src/core/repairer.js";
+import { WebIFC, createIfcApi, getContainedElements, getIdsOfType, getLine, openModel, saveModel } from "../src/core/ifcModel.js";
+import { patchIfcStoreyNames } from "../src/core/stepPatcher.js";
 
 function parentIds(model, storeyId) {
   const storey = getLine(model, storeyId, "Decomposes");
@@ -141,7 +142,7 @@ describe("hierarchy-preserving repair", () => {
     closeModel(model);
   });
 
-  it("real 417-building/3-tower reference file: all eligible updates remain rename-only", async () => {
+  it("real 417-building/3-tower reference file: all eligible same-site branches use selective merge", async () => {
     const refPath = "C:\\Users\\ISS\\OneDrive\\Documents\\Corenet X\\Example IFC files from Consultants\\24183_bck_str_cg03_submission-(2).ifc";
     if (!fs.existsSync(refPath)) return; // machine-specific, skipped elsewhere
 
@@ -155,9 +156,35 @@ describe("hierarchy-preserving repair", () => {
 
     const result = applyRepair(model, report, { selectedStoreyIds: selected });
     expect(result.storeysUpdated).toBeGreaterThan(700);
-    expect(result.renameChanges).toHaveLength(result.storeysUpdated);
-    expect(result.mergeChanges).toEqual([]);
-    expect(result.removedEntities).toEqual([]);
+    expect(result.mergeChanges).toHaveLength(result.storeysUpdated);
+    expect(result.renameChanges).toEqual([]);
+    expect(result.elementsMoved).toBeGreaterThan(0);
     closeModel(model);
   }, 120000);
+
+  it("real multi-block file: repairs 11 nested branches and leaves the Revit-native master unchanged", async () => {
+    const refPath = "C:\\Users\\ISS\\Downloads\\Multi Block Export.ifc";
+    if (!fs.existsSync(refPath)) return;
+
+    const sourceBytes = fs.readFileSync(refPath);
+    const api = await createIfcApi();
+    const model = openModel(api, sourceBytes);
+    const blocks = detectProjectBlocks(model);
+    const report = analyze(model, { blocks });
+    const result = applyRepair(model, report);
+    const repaired = openModel(api, patchIfcStoreyNames(saveModel(model), result.renameChanges));
+
+    expect(result.storeysUpdated).toBe(11);
+    expect(result.elementsAffected).toBe(99);
+    expect(result.mergeChanges).toHaveLength(11);
+    expect(result.removedBuildingIds).toHaveLength(11);
+    expect(result.changes.some((change) => change.sourceBuildingId === 27)).toBe(false);
+    expect(getIdsOfType(repaired, WebIFC.IFCBUILDING)).toHaveLength(3);
+    expect(getIdsOfType(repaired, WebIFC.IFCBUILDINGSTOREY)).toHaveLength(15);
+    expect(getLine(repaired, 30).GlobalId.value).toBe("2JF4e6axWHqu3u0C1FZlmi");
+    expect(getLine(repaired, 30).Name.value).toBe("1st Storey - Master");
+    expect(validateRepair(repaired, result).every((check) => check.passed)).toBe(true);
+    closeModel(model);
+    closeModel(repaired);
+  });
 });

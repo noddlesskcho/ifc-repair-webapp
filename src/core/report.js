@@ -18,6 +18,7 @@ const MATCHING_METHOD_LABEL = {
   "manual-override": "Manually assigned",
 };
 const ACTION_LABEL = {
+  "elements-reassigned": "Moved into block storey",
   "storey-metadata-updated": "Linked storey name updated",
   skipped: "Skipped",
   "unresolved-unmatched": "Unresolved (unmatched)",
@@ -47,7 +48,7 @@ export function buildReportData({ report, result, audit, validation, meta }) {
       skipped: skippedStoreyIds.size,
       unresolved: unresolvedProposals.length,
       alreadyCorrect: alreadyCorrectProposals.length,
-      removed: 0,
+      removed: result.removedBuildingIds?.length || 0,
     },
     elements: {
       detected: detectedProposals.reduce((a, p) => a + p.elementCount, 0),
@@ -61,7 +62,8 @@ export function buildReportData({ report, result, audit, validation, meta }) {
   const mapping = detectedProposals.map((p) => ({
     branch: `${p.sourceBuildingName} · ${p.sourceStoreyName}`,
     resolvedZ: p.sourceAbsoluteZ,
-    repairStrategy: p.repairStrategy === "rename" ? "Rename in place" : "Review required",
+    repairStrategy:
+      p.repairStrategy === "merge" ? "Merge into block" : p.repairStrategy === "rename" ? "Rename in place" : "Review required",
     referenceBasis: REFERENCE_BASIS_LABEL[p.referenceBasis] || p.referenceBasis,
     matchingMethod: p.matchingMethod ? MATCHING_METHOD_LABEL[p.matchingMethod] || p.matchingMethod : "—",
     target:
@@ -108,8 +110,8 @@ export function buildReportData({ report, result, audit, validation, meta }) {
     counts,
     mapping,
     typeBreakdown: [...typeBreakdown.entries()].map(([type, row]) => ({ type, ...row })),
-    removedContainers: [],
-    containmentReassignments: 0,
+    removedContainers: result.removedEntities || [],
+    containmentReassignments: result.elementsMoved || 0,
     unresolvedIssues,
     validation: validation || [],
     audit,
@@ -198,7 +200,7 @@ export function renderPdfReport(data) {
     ["Metric", "Branches", "Elements"],
     [
       ["Detected", String(data.counts.branches.detected), String(data.counts.elements.detected)],
-      ["Storey names updated", String(data.counts.branches.repaired), String(data.counts.elements.repaired)],
+      ["Branches repaired", String(data.counts.branches.repaired), String(data.counts.elements.repaired)],
       ["Already correct", String(data.counts.branches.alreadyCorrect), String(data.counts.elements.alreadyCorrect)],
       ["Skipped", String(data.counts.branches.skipped), String(data.counts.elements.skipped)],
       ["Unresolved", String(data.counts.branches.unresolved), String(data.counts.elements.unresolved)],
@@ -206,7 +208,7 @@ export function renderPdfReport(data) {
     ]
   );
 
-  y = sectionHeading(doc, "Linked storey name mapping (before -> after)", y, marginX);
+  y = sectionHeading(doc, "Linked branch mapping (before -> after)", y, marginX);
   y = table(
     doc,
     marginX,
@@ -244,7 +246,14 @@ export function renderPdfReport(data) {
   y = sectionHeading(doc, "Hierarchy preservation", y, marginX);
   doc.setFontSize(9);
   doc.setTextColor(110);
-  doc.text("No IfcSite, IfcBuilding or IfcBuildingStorey container was removed, and product containment was preserved.", marginX, y);
+  doc.text(
+    data.counts.branches.removed > 0
+      ? `${data.counts.branches.removed} empty nested IfcBuilding branch(es) were removed after their products were consolidated. All IfcSite and target block/storey identities were preserved.`
+      : "No spatial container was removed; product identity and placement were preserved.",
+    marginX,
+    y,
+    { maxWidth: doc.internal.pageSize.getWidth() - marginX * 2 }
+  );
   y += 20;
 
   y = sectionHeading(doc, "Unresolved issues", y, marginX);

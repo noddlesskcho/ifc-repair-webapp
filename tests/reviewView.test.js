@@ -196,12 +196,14 @@ describe("renderProposalTable", () => {
   it("shows an uncertain-assignment badge for a low-confidence multi-block building", () => {
     const branches = [{ ...linkedBranches[0], blockId: 10, blockGuid: "Tower-A-GUID", blockLabel: "Tower A", assignmentConfident: false }];
     const report = makeReport(
-      [proposal({ sourceStoreyId: 1, fflDifferenceMm: 4000, sourceBlockId: 10, sourceBlockGuid: "Tower-A-GUID", sourceBlockLabel: "Tower A" })],
+      [proposal({ sourceStoreyId: 1, fflDifferenceMm: 4000, sourceBlockId: 10, sourceBlockGuid: "Tower-A-GUID", sourceBlockLabel: "Tower A", assignmentConfident: false })],
       { blocksMode: "MULTI_BLOCK", towerGroups: [{ blockId: 10, blockGuid: "Tower-A-GUID", blockLabel: "Tower A", masterStoreys }], linkedBranches: branches }
     );
     const html = renderProposalTable(report, "review", "");
     expect(html).toContain("assignment-uncertain");
     expect(html).toContain("Best guess: Tower A");
+    expect(html).toContain("Select a level to confirm");
+    expect(html).not.toContain(`<option value="2" selected`);
   });
 
   it("sorts rows within a building group by the requested column", () => {

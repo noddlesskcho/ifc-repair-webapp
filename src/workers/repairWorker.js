@@ -15,7 +15,7 @@
  *   save      -- patching the two storey-name fields in the original bytes
  *   validate  -- reopening the output and checking hierarchy preservation
  */
-import { closeModel, createIfcApi, openModel } from "../core/ifcModel.js";
+import { closeModel, createIfcApi, openModel, saveModel } from "../core/ifcModel.js";
 import { analyze, selectRepairableProposals } from "../core/detector.js";
 import { detectProjectBlocks } from "../core/blockDetection.js";
 import { applyRepair, buildElementAudit, validateRepair } from "../core/repairer.js";
@@ -52,9 +52,11 @@ self.onmessage = async (event) => {
     const audit = buildElementAudit(model, report, result);
 
     self.postMessage({ type: "progress", stage: "save" });
-    // applyRepair is non-mutating. Patch the original bytes directly instead
-    // of serializing the entire web-ifc model.
-    const bytes = patchIfcStoreyNames(new Uint8Array(buffer), result.renameChanges);
+    // Same-site nested-branch merges mutate containment and spatial
+    // relationships and therefore require serialization. Rename-only runs
+    // retain the fast byte patch that avoids a full model rewrite.
+    const structuralBytes = result.mergeChanges.length > 0 ? saveModel(model) : new Uint8Array(buffer);
+    const bytes = patchIfcStoreyNames(structuralBytes, result.renameChanges);
 
     closeModel(model);
     model = openModel(api, bytes);

@@ -102,6 +102,38 @@ function buildBuildingProfile(model, buildingId, scaleToMM) {
   };
 }
 
+function guidFamily(value) {
+  const text = String(value || "");
+  return text.length === 22 ? text.slice(0, 21) : null;
+}
+
+/**
+ * Revit derives the native IfcProject, IfcSite and IfcBuilding GUIDs from the
+ * same project identity; in its exports they share the first 21 compressed
+ * IFC-GUID characters and differ only in the final character. Linked-model
+ * buildings have unrelated GUID families. This exporter-specific evidence
+ * only protects a native host from being treated as a repair source; it never
+ * makes that building a tower by itself.
+ */
+function nativeHostBuildingIds(model, profiles, debugLog) {
+  const projectFamilies = new Set(
+    getIdsOfType(model, WebIFC.IFCPROJECT).map((id) => guidFamily(guidOf(model, id))).filter(Boolean)
+  );
+  const siteFamilies = new Set(
+    getIdsOfType(model, WebIFC.IFCSITE).map((id) => guidFamily(guidOf(model, id))).filter(Boolean)
+  );
+  const rootFamilies = new Set([...projectFamilies].filter((family) => siteFamilies.has(family)));
+  const ids = new Set(
+    profiles.filter((profile) => rootFamilies.has(guidFamily(profile.guid))).map((profile) => profile.id)
+  );
+  if (ids.size > 0) {
+    debugLog.push(
+      `Revit-native host building(s): ${profiles.filter((profile) => ids.has(profile.id)).map((profile) => profile.guid).join(", ")}`
+    );
+  }
+  return ids;
+}
+
 /**
  * A deliberately small supporting signal for reference-storey ladders.
  * Names never identify a block on their own: this only distinguishes a
@@ -149,6 +181,7 @@ function emptyResult(mode, debugLog, extra = {}) {
     mode,
     blocks: [],
     baseBuildings: [],
+    hostBuildings: [],
     linkedBuildings: [],
     unclassifiedBuildings: [],
     evidence: debugLog,
@@ -170,6 +203,8 @@ export function detectProjectBlocks(model) {
     }
 
     const profiles = buildingIds.map((id) => buildBuildingProfile(model, id, scaleToMM));
+    const nativeHostIds = nativeHostBuildingIds(model, profiles, debugLog);
+    const isProtectedHost = (profile) => nativeHostIds.has(profile.id);
 
     const emptyBuildings = profiles.filter((p) => p.elementCount === 0);
     const withContent = profiles.filter((p) => p.elementCount > 0);
@@ -209,7 +244,11 @@ export function detectProjectBlocks(model) {
 
       debugLog.push("No building has two or more storeys; no reference ladder can be identified.");
       debugLog.push("Detected mode: UNKNOWN (cannot reliably distinguish block buildings)");
-      return emptyResult("UNKNOWN", debugLog, { unclassifiedBuildings: tooSmallUnclassified, linkedBuildings: tooSmallLinked });
+      return emptyResult("UNKNOWN", debugLog, {
+        hostBuildings: profiles.filter(isProtectedHost),
+        unclassifiedBuildings: tooSmallUnclassified.filter((profile) => !isProtectedHost(profile)),
+        linkedBuildings: tooSmallLinked.filter((profile) => !isProtectedHost(profile)),
+      });
     }
 
     if (eligible.length === 1) {
@@ -219,8 +258,9 @@ export function detectProjectBlocks(model) {
         mode: "SINGLE_BLOCK",
         blocks: [only],
         baseBuildings: [],
-        linkedBuildings: tooSmallLinked,
-        unclassifiedBuildings: tooSmallUnclassified,
+        hostBuildings: [...tooSmallLinked, ...tooSmallUnclassified].filter(isProtectedHost),
+        linkedBuildings: tooSmallLinked.filter((profile) => !isProtectedHost(profile)),
+        unclassifiedBuildings: tooSmallUnclassified.filter((profile) => !isProtectedHost(profile)),
         evidence: debugLog,
         debugLog,
       };
@@ -272,8 +312,13 @@ export function detectProjectBlocks(model) {
         );
         debugLog.push("Detected mode: UNKNOWN (cannot reliably distinguish block buildings)");
         return emptyResult("UNKNOWN", debugLog, {
-          unclassifiedBuildings: [...eligible.filter((p) => p.elementCount === 0), ...tooSmallUnclassified],
-          linkedBuildings: [...eligible.filter((p) => p.elementCount > 0), ...tooSmallLinked],
+          hostBuildings: profiles.filter(isProtectedHost),
+          unclassifiedBuildings: [...eligible.filter((p) => p.elementCount === 0), ...tooSmallUnclassified].filter(
+            (profile) => !isProtectedHost(profile)
+          ),
+          linkedBuildings: [...eligible.filter((p) => p.elementCount > 0), ...tooSmallLinked].filter(
+            (profile) => !isProtectedHost(profile)
+          ),
         });
       }
 
@@ -312,12 +357,23 @@ export function detectProjectBlocks(model) {
     // Keep roles disjoint. Empty non-anchor shells remain visible for report
     // and assignment diagnostics, but are never described as linked product
     // buildings merely because they lost the comparative score split.
-    const finalLinked = [...rest.filter((p) => p.elementCount > 0), ...tooSmallLinked];
-    const finalUnclassified = [...rest.filter((p) => p.elementCount === 0), ...tooSmallUnclassified];
+    const nonAnchorProfiles = [...rest, ...tooSmallLinked, ...tooSmallUnclassified];
+    const hostBuildings = nonAnchorProfiles.filter(isProtectedHost);
+    const finalLinked = [...rest.filter((p) => p.elementCount > 0), ...tooSmallLinked].filter(
+      (profile) => !isProtectedHost(profile)
+    );
+    const finalUnclassified = [...rest.filter((p) => p.elementCount === 0), ...tooSmallUnclassified].filter(
+      (profile) => !isProtectedHost(profile)
+    );
 
     if (cluster.length === 0) {
       debugLog.push("Detected mode: UNKNOWN (block candidates were all reclassified as base/podium)");
-      return emptyResult("UNKNOWN", debugLog, { unclassifiedBuildings: finalUnclassified, baseBuildings, linkedBuildings: finalLinked });
+      return emptyResult("UNKNOWN", debugLog, {
+        unclassifiedBuildings: finalUnclassified,
+        baseBuildings,
+        hostBuildings,
+        linkedBuildings: finalLinked,
+      });
     }
 
     if (cluster.length === 1) {
@@ -326,6 +382,7 @@ export function detectProjectBlocks(model) {
         mode: "SINGLE_BLOCK",
         blocks: cluster,
         baseBuildings,
+        hostBuildings,
         linkedBuildings: finalLinked,
         unclassifiedBuildings: finalUnclassified,
         evidence: debugLog,
@@ -338,6 +395,7 @@ export function detectProjectBlocks(model) {
       mode: "MULTI_BLOCK",
       blocks: cluster,
       baseBuildings,
+      hostBuildings,
       linkedBuildings: finalLinked,
       unclassifiedBuildings: finalUnclassified,
       evidence: debugLog,

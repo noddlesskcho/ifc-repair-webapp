@@ -203,9 +203,29 @@ export function getContainedElements(model, structureId) {
   for (const r of relRefs) {
     const rel = getLine(model, r.value); // may be undefined: a stale inverse ref to a since-deleted/repointed rel
     if (!rel) continue;
+    // web-ifc can retain the old inverse reference after RelatingStructure is
+    // repointed in the current session. Verify the live forward reference so
+    // an emptied source storey does not still appear to contain products.
+    if (rel.RelatingStructure?.value !== structureId) continue;
     for (const e of rel.RelatedElements || []) elements.push(e.value);
   }
   return elements;
+}
+
+/** Repoints every complete containment relation from one spatial structure to another. */
+export function repointContainedElements(model, sourceStructureId, targetStructureId) {
+  const source = getLine(model, sourceStructureId, "ContainsElements");
+  const relationIds = [];
+  const elementIds = [];
+  for (const relationRef of source?.ContainsElements || []) {
+    const relation = getLine(model, relationRef.value);
+    if (!relation || relation.RelatingStructure?.value !== sourceStructureId) continue;
+    relationIds.push(relation.expressID);
+    for (const elementRef of relation.RelatedElements || []) elementIds.push(elementRef.value);
+    relation.RelatingStructure = ref(targetStructureId);
+    model.api.WriteLine(model.modelID, relation);
+  }
+  return { relationIds, elementIds };
 }
 
 /** The single parent object decomposing `id` via IfcRelAggregates.RelatingObject, or null at the root. */

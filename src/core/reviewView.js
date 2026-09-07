@@ -92,8 +92,13 @@ function yesNo(value) {
 /** Groups options by tower/master building once there's more than one master to choose from, so it's clear which building each candidate level belongs to. */
 function targetSelect(report, p) {
   const sorted = report.masterStoreys.slice().sort((a, b) => b.absoluteZ - a.absoluteZ);
-  const option = (s) => `<option value="${s.id}" ${s.id === p.targetStoreyId ? "selected" : ""}>${escape(s.name)} (${escape(formatElevation(s.absoluteZ))})</option>`;
-  const placeholder = p.targetStoreyId == null ? `<option value="" selected disabled>— Select a level —</option>` : "";
+  const needsExplicitConfirmation = p.assignmentConfident === false && !p.manualOverride;
+  const option = (s) =>
+    `<option value="${s.id}" ${!needsExplicitConfirmation && s.id === p.targetStoreyId ? "selected" : ""}>${escape(s.name)} (${escape(formatElevation(s.absoluteZ))})</option>`;
+  const placeholder =
+    p.targetStoreyId == null || needsExplicitConfirmation
+      ? `<option value="" selected disabled>— Select a level to confirm —</option>`
+      : "";
 
   let optionsHtml;
   if (report.blocksMode === "MULTI_BLOCK" && report.towerGroups?.length > 1) {
@@ -121,6 +126,9 @@ function shortDescription(report, p) {
   if (p.alreadyCorrect) return "Already correct -- no change needed.";
   if (p.sameParentCollision) return "Review required: multiple levels under this source building resolve to the same target level.";
   if (p.targetStoreyId == null) return "No confident match found -- please choose a level manually.";
+  if (p.assignmentConfident === false && !p.manualOverride) {
+    return `Best guess is <strong>${escape(p.targetStoreyName)}</strong>, but tower evidence is weak. Select a level to confirm this row.`;
+  }
   if (p.manualOverride) {
     return `Manually set to <strong>${escape(p.targetStoreyName)}</strong>.`;
   }

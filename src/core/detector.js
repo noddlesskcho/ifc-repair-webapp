@@ -314,8 +314,9 @@ function baseProposal(source, buildingId, siteId) {
     ownPlacementTargetStoreyName: null,
     status: "unmatched",
     explanation: "",
-    // Repairs only ever rename this storey in place. A genuine duplicate
-    // target within the same immediate IfcBuilding is held for review.
+    // Single-block and cross-site repairs rename this storey in place.
+    // Same-site MULTI_BLOCK analysis may promote this to "merge" after the
+    // source building is assigned to a block.
     repairStrategy: null,
     sameParentCollision: false,
     // Populated only when a caller passes `overrides` to analyze().
@@ -698,6 +699,7 @@ function analyzeMultiBlock(model, blockResult, { storeyMatchTolerance, sourceNam
   for (const group of rawGroups) {
     const blockBuildingId = group.block.id;
     const blockGuid = group.block.guid;
+    const blockSiteId = getContainingSiteId(model, blockBuildingId);
     const blockLabel = group.block.name && group.block.name !== "Unnamed" ? group.block.name : `Block ${blockGuid.slice(0, 8)}`;
     const masterStoreys = buildMasterStoreys(model, blockBuildingId, scaleToMM);
     towerGroups.push({ blockId: blockBuildingId, blockGuid, blockLabel, masterStoreys });
@@ -754,6 +756,19 @@ function analyzeMultiBlock(model, blockResult, { storeyMatchTolerance, sourceNam
           p.sourceBlockGuid = blockGuid;
           p.sourceBlockLabel = blockLabel;
           p.assignmentConfident = assignment?.confident ?? null;
+          // Consolidate only within the same IfcSite. This removes flattened
+          // nested-link building branches without ever pulling content into
+          // another linked file's site hierarchy. Cross-site repairs retain
+          // the existing rename-in-place behavior.
+          if (p.targetStoreyId != null && siteId != null && siteId === blockSiteId) {
+            p.repairStrategy = "merge";
+            if (p.alreadyCorrect) {
+              p.alreadyCorrect = false;
+              p.explanation =
+                `Storey name already matches '${p.targetStoreyName}', but its products remain in a separate nested-link ` +
+                "building and will be consolidated into the matched block storey.";
+            }
+          }
         }
         proposals.push(...storeyProposals);
       }
@@ -783,7 +798,12 @@ function analyzeMultiBlock(model, blockResult, { storeyMatchTolerance, sourceNam
     sourceName,
     blocksMode: "MULTI_BLOCK",
     towerGroups,
-    buildingCount: blockResult.blocks.length + blockResult.linkedBuildings.length + blockResult.baseBuildings.length + blockResult.unclassifiedBuildings.length,
+    buildingCount:
+      blockResult.blocks.length +
+      blockResult.linkedBuildings.length +
+      blockResult.baseBuildings.length +
+      (blockResult.hostBuildings?.length || 0) +
+      blockResult.unclassifiedBuildings.length,
     masterBuildingId: null,
     masterBuildingGuid: null,
     masterBuildingName: null,

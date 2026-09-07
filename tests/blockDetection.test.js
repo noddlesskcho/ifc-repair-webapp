@@ -51,6 +51,20 @@ describe("detectProjectBlocks", () => {
     closeModel(model);
   });
 
+  it("protects a Revit-native host that would otherwise look like a linked branch", async () => {
+    const source = fs
+      .readFileSync(new URL("./fixtures/multi_block_podium.ifc", import.meta.url), "utf8")
+      .replace("1TYPICALAAAAAAAAAAAAB1", "1AAAAAAAAAAAAAAAAAAAB0");
+    const api = await createIfcApi();
+    const model = openModel(api, Buffer.from(source));
+    const result = detectProjectBlocks(model);
+
+    expect(result.mode).toBe("MULTI_BLOCK");
+    expect(result.hostBuildings.map((building) => building.name)).toEqual(["Typical Unit A"]);
+    expect(result.linkedBuildings.some((building) => building.name === "Typical Unit A")).toBe(false);
+    closeModel(model);
+  });
+
   it("returns UNKNOWN rather than guessing when block scores decline smoothly with no confident gap", async () => {
     const model = await openFixture("ambiguous_blocks.ifc");
     const result = detectProjectBlocks(model);
@@ -159,6 +173,8 @@ describe("compareBlockStoreys", () => {
     expect(result.mode).toBe("MULTI_BLOCK");
     expect(new Set(result.blocks.map((b) => b.guid))).toEqual(EXPECTED);
     expect(result.blocks.find((b) => b.guid === "255Ewxp09I0A7CFuDkrVw1").elementCount).toBe(0);
+    expect(result.hostBuildings.map((building) => building.guid)).toEqual(["2zLkFg$5fCX9SSV3Lq4366"]);
+    expect(result.linkedBuildings).toHaveLength(11);
     closeModel(model);
   });
 });
