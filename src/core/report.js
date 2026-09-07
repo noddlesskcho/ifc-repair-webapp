@@ -118,6 +118,7 @@ export function buildReportData({ report, result, audit, validation, meta }) {
 }
 
 const BRAND = [37, 99, 235]; // accent blue, matches the app's UI
+const REPORT_TITLE = "Revit Linked Model IfcStorey Repair Report";
 
 function addFooter(doc, marginX) {
   const pageCount = doc.internal.getNumberOfPages();
@@ -127,7 +128,7 @@ function addFooter(doc, marginX) {
     doc.setPage(i);
     doc.setFontSize(8);
     doc.setTextColor(130);
-    doc.text("IFC Linked-Branch Repair Report", marginX, pageHeight - 22);
+    doc.text(REPORT_TITLE, marginX, pageHeight - 22);
     doc.text(`Page ${i} of ${pageCount}`, pageWidth - marginX, pageHeight - 22, { align: "right" });
   }
 }
@@ -170,7 +171,7 @@ export function renderPdfReport(data) {
   doc.setFontSize(17);
   doc.setTextColor(20, 24, 33);
   doc.setFont(undefined, "bold");
-  doc.text("IFC Linked-Branch Repair Report", marginX, y);
+  doc.text(REPORT_TITLE, marginX, y);
   doc.setFont(undefined, "normal");
   y += 24;
 
